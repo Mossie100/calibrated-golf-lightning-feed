@@ -35,6 +35,16 @@ def unavailable(now,why):
     return dict(source='EUMETSAT-MTG-LI-LFL',region='southern-africa',complete=False,
       generated_at=utcstamp(now),observation_end=None,flashes=[],status='unavailable',reason=why)
 
+def body_netcdf_members(entries):
+    """Return only real LI flash-array files, excluding trailers/metadata.
+
+    Verified against an actual EUMETSAT LI-2-LFL ZIP (2026-10-14):
+    CHK-BODY contains latitude/longitude/flash_time; CHK-TRAIL does not.
+    """
+    return [name for entry in entries
+            if (name:=str(entry)) and '--CHK-BODY--' in name.upper()
+            and name.lower().endswith(('.nc','.nc4','.nc4e'))]
+
 def process_netcdf(path, observation_end):
     from netCDF4 import Dataset, num2date
     with Dataset(path) as ds:
@@ -95,9 +105,13 @@ def pull():
         for prod in entries:
             start=aware(prod.sensing_start);end=aware(prod.sensing_end)
             if not start or not end or end<start:continue
-            files=[str(entry) for entry in prod.entries if str(entry).lower().endswith(('.nc','.nc4','.nc4e'))]
+            # An L2 product contains several NetCDF members: CHK-BODY holds
+            # flash arrays; CHK-TRAIL holds only statistics/metadata.  Never
+            # parse the trailer as an observation file (it has no lat/lon/time).
+            files=body_netcdf_members(prod.entries)
             if not files:
-                raise RuntimeError(f'Product {prod} had no LI-2-LFL netCDF member')
+                raise RuntimeError(f'Product {prod} had no LI-2-LFL CHK-BODY NetCDF member')
+            print(f'Found {len(files)} flash-data BODY chunk(s) in {prod}')
             one_product=[]
             for i,member in enumerate(files):
                 path=pathlib.Path(tmp)/f'{len(coverage)}_{i}.nc'
